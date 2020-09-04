@@ -1,0 +1,137 @@
+Map.centerObject(region,13) // Adjusting better zoom for this project
+
+var bands = ['B4','B8', 'B11','B3','B2']; // Usefull Sentinel Bands for this project
+
+// Getting the images
+
+var dataset1 = ee.Image(sentinelrepository
+    .filterBounds(region)
+    .filterDate('2014-09-28', '2015-10-28')
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+    .sort('CLOUD_COVER')
+    .select(bands)
+    .map(function(image){return image.clip(region)})
+    .first());
+
+var dataset2 = ee.Image(sentinelrepository
+    .filterBounds(region)
+    .filterDate('2019-09-28', '2020-08-08')
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10))
+    .sort('CLOUD_COVER')
+    .select(bands)
+    .map(function(image){return image.clip(region)})
+    .first());
+
+//Preprocessing :
+
+//--------------------------------Image normalization - Function---------------------------------
+var normalization = function(image) {
+    var imMinMax = image.reduceRegion({
+        reducer: ee.Reducer.minMax(),
+        geometry: image.geometry(),
+        scale: 1000,
+        maxPixels: 10e9,
+        bestEffort: true,
+        tileScale: 16
+    });
+    var imNorm = ee.ImageCollection.fromImages(
+        image.bandNames().map(function(name){
+            name = ee.String(name);
+            var band = image.select(name);
+            return band.unitScale(ee.Number(imMinMax.get(name.cat('_min'))), ee.Number(imMinMax.get(name.cat('_max'))));
+        })
+    );
+    return imNorm.toBands().rename(image.bandNames());
+};
+var imNormalize = function(imcollection){
+  return imcollection.map(normalization);
+};
+exports.imNormalize = imNormalize;
+
+//---------------------**---------------------**Index estimations**---------------------**---------------
+
+// NDVI - 1
+var ndvi = dataset1.expression('(nir - red) / (nir + red)' ,{
+  'nir':dataset1.select('B8'),
+  'red':dataset1.select('B4'),
+}).rename('NDVI')
+var ndvi_1 = dataset1.addBands(ndvi)
+
+// NDBI - 1
+var ndbi = dataset1.expression('(nir - Midir) / (nir + Midir)' ,{
+  'nir':dataset1.select('B8'),
+  'Midir':dataset1.select('B11'),
+}).rename('NDBI')
+var ndbi_1 = dataset1.addBands(ndbi)
+
+// NDVI - 2
+var ndvi = dataset2.expression('(nir - red) / (nir + red)' ,{
+  'nir':dataset2.select('B8'),
+  'red':dataset2.select('B4'),
+}).rename('NDVI')
+var ndvi_2 = dataset2.addBands(ndvi)
+
+// NDBI - 2
+
+var ndbi = dataset2.expression('(nir - Midir) / (nir + Midir)' ,{
+  'nir':dataset2.select('B8'),
+  'Midir':dataset2.select('B11'),
+}).rename('NDBI')
+var ndbi_2 = dataset2.addBands(ndbi)
+
+var ndvi1_n = normalization(ndvi_1)
+var ndvi2_n = normalization(ndvi_2)
+var ndbi1_n = normalization(ndbi_1)
+var ndbi2_n = normalization(ndbi_2)
+var época_1 = normalization(dataset1)
+var época_2 = normalization(dataset2)
+
+Map.addLayer(época_1, {bands: ['B4','B3','B2']}, 'Época 1');
+Map.addLayer(época_2, {bands: ['B4','B3','B2']}, 'Época 2'); 
+
+var build_1 = dataset1.expression('(NDBI - NDVI)' ,{
+  'NDBI':ndbi1_n.select('NDBI'),
+  'NDVI':ndvi1_n.select('NDVI'),
+}).rename('build_1')
+var build_1 = dataset1.addBands(build_1)
+
+var build_2 = dataset2.expression('(NDBI - NDVI)' ,{
+  'NDBI':ndbi2_n.select('NDBI'),
+  'NDVI':ndvi2_n.select('NDVI'),
+}).rename('build_2')
+var build_2 = dataset2.addBands(build_2)
+
+var new_buildings = dataset2.expression('(build_2 - build_1)',{
+  'build_1':build_1.select('build_1'),
+  'build_2':build_2.select('build_2'),
+}).rename('new edifications')
+var new_buildings = dataset2.addBands(new_buildings)
+
+//--------------------------------Image parameters---------------------------------
+
+Map.addLayer(new_buildings, {bands: ['new edifications']}, 'new edifications');
+
+var visMax = {bands:['new edifications'],min: 0.2, pallete : ['00FFFF', '0000FF']};
+
+Map.addLayer(new_buildings, visMax, 'class-0.2');
+var visParams = {bands:['new edifications'],min: 0.3, pallete :['00FFFF', '0000FF']};
+Map.addLayer(new_buildings, visParams, 'class-0.3');
+
+// ------------------------- Extras --------------------------------------
+/*
+Reading Max and Min ND values might be usefull
+
+var min1n = new_buildings.reduceRegion({
+      reducer: ee.Reducer.min(),
+      geometry: region,
+      scale : 250
+      })
+var max1n = new_buildings.reduceRegion({
+      reducer: ee.Reducer.max(),
+      geometry: region,
+      scale : 250
+      })
+      
+print(min1n)
+print(max1n)
+*/
